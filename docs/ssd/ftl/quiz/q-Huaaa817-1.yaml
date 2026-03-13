@@ -1,4 +1,4 @@
-author: yHuaaa817
+author: Huaaa817
 date: 2026-03-14
 question: |
   一個 SSD 使用 DFTL。mapping table 的完整版本存放在 NAND flash 中，而 SRAM 中只存放一部分 mapping entries 作為 Cached Mapping Table (CMT)
