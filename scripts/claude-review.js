@@ -33,7 +33,7 @@ if (fs.existsSync(envPath)) {
 const apiKey = process.env.ANTHROPIC_API_KEY;
 if (!apiKey) {
   console.error('ANTHROPIC_API_KEY not set — skipping AI review');
-  const md = '## \uD83E\uDD16 AI Quality Review\n\n> AI review unavailable — `ANTHROPIC_API_KEY` not configured. Please review manually.\n\n---\n_Review by Claude (claude-sonnet-4-5-20250929). This is advisory — a maintainer makes the final merge decision._\n';
+  const md = '## \uD83E\uDD16 AI 題目審查\n\n> AI 審查不可用 — 未設定 `ANTHROPIC_API_KEY`，請人工審查。\n\n---\n_審查由 Claude (claude-sonnet-4-5-20250929) 執行。此為建議性質，最終由助教或老師決定是否 merge。_\n';
   fs.writeFileSync(path.join(repoRoot, 'claude-review-results.md'), md);
   process.exit(0);
 }
@@ -76,7 +76,7 @@ async function reviewFile(filePath) {
     }
 
     if (truncated) {
-      console.log(`  Note: ${allFiles.length} existing files, showing 20 most recent`);
+      console.log(`  注意: 共 ${allFiles.length} 個既有檔案，僅顯示最近 20 個`);
     }
   } catch {
     // no existing files
@@ -84,43 +84,50 @@ async function reviewFile(filePath) {
 
   const existingSection = existingFiles.length > 0
     ? existingFiles.map(f => `### ${f.filename}\n\`\`\`yaml\n${f.content}\`\`\``).join('\n\n')
-    : '(none)';
+    : '（無）';
 
-  const userPrompt = `## New Question
-File: ${basename}
-Topic: ${pillar} / ${concept}
+  const userPrompt = `## 新題目
+檔案: ${basename}
+主題: ${pillar} / ${concept}
 
 \`\`\`yaml
 ${newContent}\`\`\`
 
-## Existing Questions in This Topic (${existingFiles.length} total)
+## 本主題的既有題目（共 ${existingFiles.length} 題）
 ${existingSection}
 
-## Review Tasks
+## 審查任務
 
-### 1. Quality Assessment
-- Is the question testing reasoning, application, or analysis — NOT just vocabulary recall or definition matching?
-- Is the correct answer unambiguously correct?
-- Are all 4 distractors plausible? Does each represent a real misconception a student might have?
-- Are the explanations clear and educational?
-- Is the question well-written (clear, grammatically correct, sufficient context)?
+### 1. 正確性驗證
+- 被標記為 correct 的選項是否確實正確？請根據 storage systems 的專業知識驗證。
+- 被標記為錯誤的三個選項是否確實是錯的？是否有任何一個「錯誤」選項在某些情境下也可能成立？
+- 如果正確答案有誤或存在歧義，必須在 quality_verdict 中標記為 "request-changes"。
 
-### 2. Duplicate Detection
-- Is this question semantically different from ALL existing questions?
-- It must test a different aspect, scenario, or reasoning chain — not just rephrase an existing question with different numbers or wording.
-- If it overlaps with an existing question, identify which one and explain the overlap.
+### 2. 品質評估
+- 題目是否在測試推理、應用或分析能力？而不是單純考定義或名詞解釋？
+- 正確答案是否毫無歧義地正確？
+- 四個選項是否都夠有誘答力？每個錯誤選項是否代表學生可能犯的真實錯誤？
+- Explanation 是否清楚且有教育價值？
+- 題目撰寫品質如何？（清楚、語法正確、有足夠的上下文）
 
-Respond in this exact JSON format:
+### 3. 重複偵測
+- 這題是否與所有既有題目在語意上不同？
+- 必須測試不同的面向、情境或推理過程 — 不能只是換數字或重新措辭。
+- 如果與既有題目重複，請指出是哪一題並說明重疊之處。
+
+請以下列 JSON 格式回覆（feedback 和 explanation 請用繁體中文寫，技術名詞維持英文）：
 {
   "quality_verdict": "approve" | "request-changes",
-  "quality_feedback": "One paragraph explaining your assessment.",
+  "quality_feedback": "一段話說明你的評估。",
+  "correctness_ok": true | false,
+  "correctness_issue": "如有正確性問題，說明哪裡有誤或有歧義" | null,
   "is_duplicate": true | false,
   "duplicate_of": "filename.yaml" | null,
   "duplicate_explanation": "..." | null,
-  "suggestions": ["2-3 alternative angles the student could explore if this is a duplicate or needs improvement"]
+  "suggestions": ["2-3 個替代出題方向，供同學在題目重複或需改進時參考"]
 }`;
 
-  const systemPrompt = 'You are a quiz question reviewer for a graduate-level storage systems course. You assess question quality and check for duplicates.';
+  const systemPrompt = '你是一個研究所等級的 storage systems 課程的 quiz 審查員。你負責驗證題目正確性、評估品質、檢查是否重複。請用繁體中文回覆，技術名詞（如 FTL、NAND、write amplification、LSM-tree 等）維持英文。';
 
   try {
     const response = await Promise.race([
@@ -142,7 +149,7 @@ Respond in this exact JSON format:
     const review = JSON.parse(text.trim());
     return { file: basename, relPath, review, error: null };
   } catch (err) {
-    console.error(`  API error for ${basename}: ${err.message}`);
+    console.error(`  API 錯誤 (${basename}): ${err.message}`);
     return { file: basename, relPath, review: null, error: err.message };
   }
 }
@@ -150,37 +157,49 @@ Respond in this exact JSON format:
 async function main() {
   const results = [];
   for (const f of files) {
-    console.log(`Reviewing: ${f}`);
+    console.log(`審查中: ${f}`);
     const result = await reviewFile(f);
     results.push(result);
   }
 
   // Format markdown
-  const mdParts = ['## \uD83E\uDD16 AI Quality Review\n'];
+  const mdParts = ['## \uD83E\uDD16 AI 題目審查\n'];
 
   for (const r of results) {
     mdParts.push(`### \`${r.relPath}\`\n`);
 
     if (r.error) {
-      mdParts.push(`> AI review unavailable for this file: ${r.error}. Please review manually.\n`);
+      mdParts.push(`> 此檔案的 AI 審查不可用: ${r.error}，請人工審查。\n`);
       continue;
     }
 
     const rv = r.review;
-    const qualityIcon = rv.quality_verdict === 'approve' ? '\u2705 Approved' : '\u26A0\uFE0F Request Changes';
-    mdParts.push(`**Quality:** ${qualityIcon}`);
-    mdParts.push(`> ${rv.quality_feedback}\n`);
 
-    const dupIcon = rv.is_duplicate ? '\u274C Duplicate Detected' : '\u2705 Unique';
-    mdParts.push(`**Duplicate check:** ${dupIcon}`);
-    if (rv.is_duplicate && rv.duplicate_explanation) {
-      mdParts.push(`> This question overlaps with \`${rv.duplicate_of}\`. ${rv.duplicate_explanation}\n`);
-    } else if (!rv.is_duplicate) {
-      mdParts.push('> No overlap with existing questions in this topic.\n');
+    // Correctness check
+    const correctIcon = rv.correctness_ok ? '\u2705 正確無誤' : '\u274C 正確性有問題';
+    mdParts.push(`**正確性驗證:** ${correctIcon}`);
+    if (!rv.correctness_ok && rv.correctness_issue) {
+      mdParts.push(`> ${rv.correctness_issue}\n`);
+    } else {
+      mdParts.push('');
     }
 
-    if (rv.suggestions && rv.suggestions.length > 0 && (rv.is_duplicate || rv.quality_verdict !== 'approve')) {
-      mdParts.push('**Suggested alternative angles:**');
+    // Quality
+    const qualityIcon = rv.quality_verdict === 'approve' ? '\u2705 通過' : '\u26A0\uFE0F 建議修改';
+    mdParts.push(`**品質評估:** ${qualityIcon}`);
+    mdParts.push(`> ${rv.quality_feedback}\n`);
+
+    // Duplicate
+    const dupIcon = rv.is_duplicate ? '\u274C 偵測到重複' : '\u2705 無重複';
+    mdParts.push(`**重複偵測:** ${dupIcon}`);
+    if (rv.is_duplicate && rv.duplicate_explanation) {
+      mdParts.push(`> 此題與 \`${rv.duplicate_of}\` 重疊。${rv.duplicate_explanation}\n`);
+    } else if (!rv.is_duplicate) {
+      mdParts.push('> 與本主題的既有題目無重疊。\n');
+    }
+
+    if (rv.suggestions && rv.suggestions.length > 0 && (rv.is_duplicate || rv.quality_verdict !== 'approve' || !rv.correctness_ok)) {
+      mdParts.push('**替代出題方向建議:**');
       for (let i = 0; i < rv.suggestions.length; i++) {
         mdParts.push(`${i + 1}. ${rv.suggestions[i]}`);
       }
@@ -190,12 +209,12 @@ async function main() {
     mdParts.push('---\n');
   }
 
-  mdParts.push('_Review by Claude (claude-sonnet-4-5-20250929). This is advisory — a maintainer makes the final merge decision._\n');
+  mdParts.push('_審查由 Claude (claude-sonnet-4-5-20250929) 執行。此為建議性質，最終由助教或老師決定是否 merge。_\n');
 
   const markdown = mdParts.join('\n');
   console.log('\n' + markdown);
   fs.writeFileSync(path.join(repoRoot, 'claude-review-results.md'), markdown);
-  console.log('Results written to claude-review-results.md');
+  console.log('結果已寫入 claude-review-results.md');
 }
 
 main();
